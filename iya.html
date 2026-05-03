@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Axon Vault Cloud v4.0</title>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+    
+    <style>
+        body { background-color: #0a0a0a; color: #ffffff; font-family: 'Segoe UI', sans-serif; margin: 0; padding: 20px; }
+        .header { text-align: center; border-bottom: 2px solid #ff0000; padding-bottom: 10px; margin-bottom: 20px; }
+        h1 { color: #ff0000; margin: 0; text-shadow: 0 0 10px #ff0000; letter-spacing: 2px; }
+        
+        /* Auth UI */
+        #authSection { background: #111; padding: 20px; border-radius: 15px; border: 1px solid #222; margin-bottom: 20px; }
+        .input-group { margin-bottom: 10px; }
+        input, textarea { width: 100%; padding: 12px; background: #000; border: 1px solid #333; color: white; border-radius: 8px; box-sizing: border-box; outline: none; }
+        input:focus { border-color: #ff0000; }
+        .btn { padding: 12px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; text-transform: uppercase; width: 100%; margin-top: 5px; }
+        .btn-main { background: #ff0000; color: white; }
+        .btn-sub { background: #222; color: #888; }
+
+        /* Main UI */
+        #mainApp { display: none; }
+        .tab-system { display: flex; gap: 10px; margin: 20px 0; }
+        .tab-btn { flex: 1; padding: 12px; background: #151515; color: #555; border: 1px solid #333; border-radius: 8px; cursor: pointer; }
+        .tab-btn.active { background: #ff0000; color: white; border-color: #ff0000; }
+
+        .script-card { background: #111; border: 1px solid #222; padding: 15px; border-radius: 12px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
+        .raw-viewer { background: #050505; border: 1px solid #222; padding: 15px; border-radius: 8px; font-family: monospace; font-size: 11px; color: #00ff00; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto; margin: 10px 0; }
+
+        /* Modal */
+        .modal { display: none; position: fixed; z-index: 2000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); }
+        .modal-content { background: #0a0a0a; margin: 10% auto; padding: 20px; width: 85%; border-radius: 15px; border: 1px solid #ff0000; }
+
+        #toast { visibility: hidden; background: #ff0000; color: white; padding: 12px; border-radius: 50px; position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); }
+        #toast.show { visibility: visible; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>AXON CLOUD</h1>
+        <p id="userEmail" style="font-size: 10px; color: #444; margin-top: 5px;">OFFLINE MODE</p>
+    </div>
+
+    <div id="authSection">
+        <div class="input-group"><input type="email" id="email" placeholder="Email"></div>
+        <div class="input-group"><input type="password" id="password" placeholder="Password"></div>
+        <button class="btn btn-main" onclick="handleAuth('login')">LOGIN</button>
+        <button class="btn btn-sub" onclick="handleAuth('register')">CREATE ACCOUNT</button>
+    </div>
+
+    <div id="mainApp">
+        <div style="background: #111; padding: 15px; border-radius: 12px; margin-bottom: 15px;">
+            <input type="text" id="sName" placeholder="Script Name" style="margin-bottom: 8px;">
+            <textarea id="sCode" placeholder="Paste Code/Loadstring" rows="2"></textarea>
+            <button class="btn btn-main" onclick="uploadScript()">UPLOAD TO CLOUD</button>
+            <button class="btn btn-sub" onclick="handleAuth('logout')">LOGOUT</button>
+        </div>
+
+        <div class="tab-system">
+            <button class="tab-btn active" id="tabL" onclick="switchTab('local')">MY CLOUD</button>
+            <button class="tab-btn" id="tabG" onclick="switchTab('global')">SCRIPTBLOX</button>
+        </div>
+
+        <input type="text" id="search" placeholder="Search..." oninput="render()" style="margin-bottom: 15px; border: 1px solid #ff0000;">
+        <div id="list"></div>
+    </div>
+
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <div id="modalBody"></div>
+            <button class="btn btn-main" onclick="copyCode()">COPY SCRIPT</button>
+            <div id="delBtnArea"></div>
+            <button class="btn btn-sub" onclick="closeModal()">CLOSE</button>
+        </div>
+    </div>
+
+    <div id="toast">Copied!</div>
+
+    <script>
+        // --- CONFIGURASI FIREBASE LU ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyDkmZ5qhu2AJuGq5dAOKJH_at3yj_QLHfM",
+            authDomain: "gemini-630e9.firebaseapp.com",
+            databaseURL: "https://axonvaultcloud-default-rtdb.asia-southeast1.firebasedatabase.app/",
+            projectId: "gemini-630e9",
+            storageBucket: "gemini-630e9.appspot.com",
+            messagingSenderId: "321952832674",
+            appId: "1:321952832674:web:6530666014e76a6b57116a"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.database();
+
+        let currentTab = 'local';
+        let cloudScripts = [];
+        let activeCode = "";
+
+        // AUTH LOGIC
+        function handleAuth(type) {
+            const e = document.getElementById('email').value;
+            const p = document.getElementById('password').value;
+            if(type === 'register') auth.createUserWithEmailAndPassword(e, p).catch(err => alert(err.message));
+            else if(type === 'login') auth.signInWithEmailAndPassword(e, p).catch(err => alert(err.message));
+            else auth.signOut();
+        }
+
+        auth.onAuthStateChanged(user => {
+            if (user) {
+                document.getElementById('authSection').style.display = 'none';
+                document.getElementById('mainApp').style.display = 'block';
+                document.getElementById('userEmail').innerText = "LOGGED IN AS: " + user.email;
+                listenToCloud();
+            } else {
+                document.getElementById('authSection').style.display = 'block';
+                document.getElementById('mainApp').style.display = 'none';
+                document.getElementById('userEmail').innerText = "OFFLINE MODE";
+            }
+        });
+
+        // DATABASE LOGIC
+        function uploadScript() {
+            const name = document.getElementById('sName').value;
+            const code = document.getElementById('sCode').value;
+            if(!name || !code) return;
+            db.ref('users/' + auth.currentUser.uid + '/scripts').push({ name, code });
+            document.getElementById('sName').value = '';
+            document.getElementById('sCode').value = '';
+            showToast("Uploaded!");
+        }
+
+        function listenToCloud() {
+            db.ref('users/' + auth.currentUser.uid + '/scripts').on('value', snap => {
+                cloudScripts = [];
+                snap.forEach(child => { cloudScripts.push({ id: child.key, ...child.val() }); });
+                render();
+            });
+        }
+
+        function render() {
+            const list = document.getElementById('list');
+            const query = document.getElementById('search').value.toLowerCase();
+            list.innerHTML = '';
+            if(currentTab === 'local') {
+                cloudScripts.forEach((s, i) => {
+                    if(s.name.toLowerCase().includes(query)) {
+                        list.innerHTML += `<div class="script-card" onclick="openModal('local', ${i})">
+                            <div><b style="color:#ff0000">${s.name}</b><br><small style="color:#444">CLOUD SAVED</small></div>
+                        </div>`;
+                    }
+                });
+            } else {
+                list.innerHTML = '<p style="color:#333;text-align:center">Scriptblox API is currently maintenance...</p>';
+            }
+        }
+
+        async function openModal(type, idx) {
+            const m = document.getElementById('modal');
+            const b = document.getElementById('modalBody');
+            const d = document.getElementById('delBtnArea');
+            m.style.display = 'block';
+            let s = cloudScripts[idx];
+            b.innerHTML = `<h3>${s.name}</h3><div class="raw-viewer" id="rv">Fetching Source...</div>`;
+            activeCode = await fetchRaw(s.code);
+            document.getElementById('rv').innerText = activeCode;
+            d.innerHTML = `<button class="btn btn-sub" style="color:red" onclick="deleteScript('${s.id}')">DELETE FROM CLOUD</button>`;
+        }
+
+        async function fetchRaw(input) {
+            const match = input.match(/https?:\/\/[^\s'"]+/);
+            if (match) {
+                try {
+                    const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(match[0])}`);
+                    const json = await res.json();
+                    return json.contents || input;
+                } catch { return input; }
+            }
+            return input;
+        }
+
+        function deleteScript(id) {
+            if(confirm("Delete from Cloud?")) {
+                db.ref('users/' + auth.currentUser.uid + '/scripts/' + id).remove();
+                closeModal();
+            }
+        }
+
+        function copyCode() {
+            navigator.clipboard.writeText(activeCode).then(() => showToast("Copied!"));
+        }
+
+        function showToast(txt) {
+            const t = document.getElementById('toast');
+            t.innerText = txt; t.className = "show";
+            setTimeout(() => t.className = "", 2000);
+        }
+
+        function closeModal() { document.getElementById('modal').style.display = 'none'; }
+        function switchTab(t) { currentTab = t; render(); }
+    </script>
+</body>
+</html>
